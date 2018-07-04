@@ -172,6 +172,7 @@ def build_model(source_waves, state_size):
 
     result_waves = tf.stack(results, axis=1)
 
+    # NOTE: random guess -> 0.69314
     loss = tf.reduce_mean(losses)
 
     # NOTE: trainer

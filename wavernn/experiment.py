@@ -50,6 +50,9 @@ def train(session, model, initial_state, saver):
     }
 
     for i in range(1000000):
+        if i > 500000:
+            feeds[model['learning_rate']] = 1e-6
+
         fetched = session.run(fetch, feed_dict=feeds)
 
         if fetched['step'] % 1000 == 0:
@@ -158,9 +161,10 @@ if __name__ == '__main__':
 
     tf.app.flags.DEFINE_integer('state_size', 896, '')
 
-    tf.app.flags.DEFINE_integer('batch_size', 128, '')
+    tf.app.flags.DEFINE_integer('batch_size', 64, '')
     tf.app.flags.DEFINE_integer('num_step_samples', 32, '')
 
     tf.app.flags.DEFINE_boolean('generate', False, '')
 
     tf.app.run()
+
