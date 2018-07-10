@@ -9,122 +9,82 @@ def build_cell_function(state_size):
     """
     initializer = tf.truncated_normal_initializer(stddev=0.2)
 
-    with tf.variable_scope('wavernn_cell', reuse=tf.AUTO_REUSE):
-        w_r = tf.get_variable(
-            'R',
-            [state_size, 3 * state_size],
-            trainable=True,
-            initializer=initializer,
-            dtype=tf.float32)
+    def dense(h, x, r, name):
+        a = tf.layers.dense(
+            h,
+            units=state_size//2,
+            activation=None,
+            use_bias=False,
+            kernel_initializer=initializer,
+            name='{}_a'.format(name))
 
-        w_i = tf.get_variable(
-            'I',
-            [768, 3 * state_size],
-            trainable=True,
-            initializer=initializer,
-            dtype=tf.float32)
+        b = tf.layers.dense(
+            x,
+            units=state_size//2,
+            activation=None,
+            use_bias=True,
+            kernel_initializer=initializer,
+            name='{}_b'.format(name))
 
-        b = tf.get_variable(
-            'b',
-            [3 * state_size],
-            trainable=True,
-            initializer=tf.zeros_initializer,
-            dtype=tf.float32)
+        if r is not None:
+            a = a * r
 
-        o1 = tf.get_variable(
-            'o1',
-            [state_size // 2, 1024],
-            trainable=True,
-            initializer=initializer,
-            dtype=tf.float32)
+        return a + b
 
-        o3 = tf.get_variable(
-            'o3',
-            [state_size // 2, 1024],
-            trainable=True,
-            initializer=initializer,
-            dtype=tf.float32)
+    def predict(state_p, name):
+        p = tf.layers.dense(
+            state_p,
+            units=1024,
+            activation=tf.nn.relu,
+            kernel_initializer=initializer,
+            name='{}_p_1024'.format(name))
 
-        o2 = tf.get_variable(
-            'o2',
-            [1024, 256],
-            trainable=True,
-            initializer=initializer,
-            dtype=tf.float32)
+        p = tf.layers.dense(
+            p,
+            units=256,
+            activation=None,
+            kernel_initializer=initializer,
+            name='{}_p_256'.format(name))
 
-        o4 = tf.get_variable(
-            'o4',
-            [1024, 256],
-            trainable=True,
-            initializer=initializer,
-            dtype=tf.float32)
-
-        b1 = tf.get_variable(
-            'b1',
-            [1024],
-            trainable=True,
-            initializer=tf.zeros_initializer,
-            dtype=tf.float32)
-
-        b3 = tf.get_variable(
-            'b3',
-            [1024],
-            trainable=True,
-            initializer=tf.zeros_initializer,
-            dtype=tf.float32)
-
-        b2 = tf.get_variable(
-            'b2',
-            [256],
-            trainable=True,
-            initializer=tf.zeros_initializer,
-            dtype=tf.float32)
-
-        b4 = tf.get_variable(
-            'b4',
-            [256],
-            trainable=True,
-            initializer=tf.zeros_initializer,
-            dtype=tf.float32)
-
-        h_state_size = state_size // 2
-
-        mask = np.ones((768, 3 * state_size), dtype=np.float32)
-
-        mask[512:, 0*state_size:0*state_size+h_state_size] = 0.0
-        mask[512:, 1*state_size:1*state_size+h_state_size] = 0.0
-        mask[512:, 2*state_size:2*state_size+h_state_size] = 0.0
-
-        mask = tf.constant(mask, name='mask')
-
-        w_i = w_i * mask
+        return p
 
     def cell(x, state):
         """
         arXiv:1802.08435v1 - equation 2
+
+        x: [N, 256 + 256]
         """
+        state_c, state_f = tf.split(state, 2, axis=-1)
+
         # NOTE: predict coarse part
-        tensors_r = tf.matmul(state, w_r)
-        tensors_i = tf.matmul(x, w_i) + b
+        x_c = tf.pad(x, paddings=[[0, 0], [0, 256]])
 
-        tensors_ru, tensors_rr, tensors_re = tf.split(tensors_r, 3, axis=-1)
-        tensors_iu, tensors_ir, tensors_ie = tf.split(tensors_i, 3, axis=-1)
+        with tf.variable_scope('wavernn_cell', reuse=tf.AUTO_REUSE):
+            u_c = tf.nn.sigmoid(dense(state, x_c, None, 'u_u'))
+            r_c = tf.nn.sigmoid(dense(state, x_c, None, 'r_u'))
+            e_c = tf.nn.tanh(dense(state, x_c, r_c, 'r_u'))
 
-        tensors_u = tf.nn.sigmoid(tensors_ru + tensors_iu)
-        tensors_r = tf.nn.sigmoid(tensors_rr + tensors_ir)
-        tensors_e = tf.nn.tanh(tensors_r * tensors_re + tensors_ie)
+            state_c = state_c * u_c - e_c * (u_c - 1.0)
 
-        state = tensors_u * state - (tensors_u - 1.0) * tensors_e
+            p_c = predict(state_c, 'predict_c')
 
-        yf, yc = tf.split(state, 2, axis=-1)
+            # NOTE: predict fine part
+            p_t = tf.nn.softmax(p_c)
 
-        pf = tf.nn.relu(tf.matmul(yf, o1) + b1)
-        pf = tf.matmul(pf, o2) + b2
+            x_f = tf.concat([x, p_t], axis=-1)
 
-        pc = tf.nn.relu(tf.matmul(yc, o3) + b3)
-        pc = tf.matmul(pc, o4) + b4
+            u_f = tf.nn.sigmoid(dense(state, x_f, None, 'u_l'))
+            r_f = tf.nn.sigmoid(dense(state, x_f, None, 'r_l'))
+            e_f = tf.nn.tanh(dense(state, x_f, r_f, 'r_l'))
 
-        return pc, pf, state
+            state_f = state_f * u_f - e_f * (u_f - 1.0)
+
+            p_f = predict(state_f, 'predict_f')
+
+        #
+        state = tf.concat([state_c, state_f], axis=-1)
+
+        return p_c, p_f, state
 
     return cell
 
@@ -132,6 +92,8 @@ def build_cell_function(state_size):
 def build_model(source_waves, state_size):
     """
     """
+    source_waves = tf.placeholder(shape=[None, 33, 512], dtype=tf.float32)
+
     # NOTE: tensors shape should be [N, T, D]
     #       N: batch size
     #       T: time step
@@ -154,7 +116,7 @@ def build_model(source_waves, state_size):
     # TODO: for generating
     for i in range(len(xs) - 1):
         # NOTE: split into fine(t) & coarse(t+1)
-        pc_label, pf_label, _ = tf.split(xs[i + 1], 3, axis=1)
+        pc_label, pf_label = tf.split(xs[i + 1], 2, axis=1)
 
         # NOTE: use fine(t-1) & coarse(t) to infer fine(t) & coarse(t+1)
         pc_guess, pf_guess, state = cell_function(xs[i], state)
@@ -176,12 +138,7 @@ def build_model(source_waves, state_size):
     loss = tf.reduce_mean(losses)
 
     # NOTE: trainer
-    step = tf.get_variable(
-        'step',
-        [],
-        trainable=False,
-        initializer=tf.constant_initializer(0, dtype=tf.int64),
-        dtype=tf.int64)
+    step = tf.train.get_or_create_global_step()
 
     learning_rate = tf.get_variable(
         'learning_rate',

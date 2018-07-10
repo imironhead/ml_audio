@@ -15,14 +15,14 @@ def build_training_model(
     """
     # NOTE: build a training data generator which read wave samples from wav
     #       files in data_dir_path
-    data_iterator = datasets.build_waves_batch_iterator(
-        data_dir_path, batch_size, num_step_samples)
+#   data_iterator = datasets.build_waves_batch_iterator(
+#       data_dir_path, batch_size, num_step_samples)
 
-    next_batch = data_iterator.get_next()
+#   next_batch = data_iterator.get_next()
 
-    model = model_wavernn.build_model(next_batch, state_size)
+    model = model_wavernn.build_model(None, state_size)
 
-    model['data_iterator'] = data_iterator
+#   model['data_iterator'] = data_iterator
 
     return model
 
@@ -36,7 +36,11 @@ def build_generating_model(state_size):
 def train(session, model, initial_state, saver):
     """
     """
-    session.run(model['data_iterator'].initializer)
+    dir_path = tf.app.flags.FLAGS.training_data_path
+
+    wave_batches = datasets.build_waves_batch_iterator(dir_path, 64, 32)
+
+#    session.run(model['data_iterator'].initializer)
 
     feeds = {
         model['initial_state']: initial_state,
@@ -44,16 +48,20 @@ def train(session, model, initial_state, saver):
     }
 
     fetch = {
+        'state': model['state'],
         'trainer': model['trainer'],
         'loss': model['loss'],
         'step': model['step'],
     }
 
     for i in range(1000000):
-        if i > 500000:
-            feeds[model['learning_rate']] = 1e-6
+        feeds[model['learning_rate']] = 1e-5 * (0.9 ** (i // 100000))
+
+        feeds[model['source_waves']] = next(wave_batches)
 
         fetched = session.run(fetch, feed_dict=feeds)
+
+        feeds[model['initial_state']] = fetched['state']
 
         if fetched['step'] % 1000 == 0:
             print('loss[{}]: {}'.format(fetched['step'], fetched['loss']))
@@ -122,7 +130,6 @@ def main(_):
     if FLAGS.generate:
         model = build_generating_model(FLAGS.state_size)
 
-        initial_state = np.zeros((1, FLAGS.state_size))
         initial_state = np.random.random((1, FLAGS.state_size))
     else:
         model = build_training_model(
