@@ -43,12 +43,15 @@ def build_waves_batch_iterator(dir_path, batch_size=128, num_step_samples=32):
             while sources[index].size < num_step_samples + 1:
                 sources[index] = next(waves)
 
+                # NOTE: make data start at random position
+                sources[index] = sources[index][np.random.randint(batch_size):]
+
             for t in range(num_step_samples + 1):
                 c_pre = sources[index][t] // 256
                 f_pre = sources[index][t] % 256
 
-                batch[index, t, sources[index][t] // 256] = 1.0
-                batch[index, t, sources[index][t]  % 256] = 1.0
+                batch[index, t, c_pre] = 1.0
+                batch[index, t, f_pre + 256] = 1.0
 
             sources[index] = sources[index][num_step_samples:]
 
