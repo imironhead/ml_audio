@@ -13,16 +13,7 @@ def build_training_model(
         data_dir_path, state_size, batch_size, num_step_samples):
     """
     """
-    # NOTE: build a training data generator which read wave samples from wav
-    #       files in data_dir_path
-#   data_iterator = datasets.build_waves_batch_iterator(
-#       data_dir_path, batch_size, num_step_samples)
-
-#   next_batch = data_iterator.get_next()
-
-    model = model_wavernn.build_model(None, state_size)
-
-#   model['data_iterator'] = data_iterator
+    model = model_wavernn.build_model(num_step_samples, state_size, True)
 
     return model
 
@@ -36,32 +27,36 @@ def build_generating_model(state_size):
 def train(session, model, initial_state, saver):
     """
     """
-    dir_path = tf.app.flags.FLAGS.training_data_path
+    FLAGS = tf.app.flags.FLAGS
 
-    wave_batches = datasets.build_waves_batch_iterator(dir_path, 64, 32)
-
-#    session.run(model['data_iterator'].initializer)
+    wave_batches = datasets.build_waves_batch_iterator(
+        FLAGS.training_data_path, FLAGS.batch_size, FLAGS.num_step_samples)
 
     feeds = {
-        model['initial_state']: initial_state,
+        model['head_state']: initial_state,
         model['learning_rate']: 1e-5,
     }
 
     fetch = {
-        'state': model['state'],
+        'tail_state': model['tail_state'],
         'trainer': model['trainer'],
         'loss': model['loss'],
         'step': model['step'],
     }
 
     for i in range(1000000):
-        feeds[model['learning_rate']] = 1e-5 * (0.9 ** (i // 100000))
+        batch_waves = next(wave_batches)
 
-        feeds[model['source_waves']] = next(wave_batches)
+        feeds[model['source_waves']] = batch_waves[:, :-1, :]
+        feeds[model['target_waves']] = batch_waves[:, 1:, :]
+
+        feeds[model['learning_rate']] = 1e-5 * (0.9 ** (i // 10000))
 
         fetched = session.run(fetch, feed_dict=feeds)
 
-        feeds[model['initial_state']] = fetched['state']
+#       feeds[model['head_state']] = fetched['tail_state']
+    
+        feeds[model['head_state']] = np.zeros_like(fetched['tail_state'])
 
         if fetched['step'] % 1000 == 0:
             print('loss[{}]: {}'.format(fetched['step'], fetched['loss']))
@@ -74,31 +69,34 @@ def generate(session, model, initial_state, out_wave_path):
 
     state = initial_state
 
-    source_waves = np.zeros((1, 512))
+    idx_old_f = np.random.randint(256)
+    idx_old_c = np.random.randint(256)
 
-    idx_old_f = 0
-    idx_old_c = 0
+    source_waves = np.zeros((1, 1, 512))
+
+    source_waves[0, 0, idx_old_c] = 1.0
+    source_waves[0, 0, idx_old_f + 256] = 1.0
 
     # NOTE: 5 seconds
-    for i in range(24000 * 1):
+    for i in range(24000 * 5):
         feeds = {
-            model['initial_state']: state,
+            model['head_state']: state,
             model['source_waves']: source_waves,
         }
 
         fetch = {
-            'state': model['state'],
+            'tail_state': model['tail_state'],
             'result_waves': model['result_waves'],
         }
 
         fetched = session.run(fetch, feed_dict=feeds)
 
-        state = fetched['state']
+        state = fetched['tail_state']
 
         result_waves = fetched['result_waves']
 
-        idx_new_f = np.argmax(result_waves[0, :256])
-        idx_new_c = np.argmax(result_waves[0, 256:])
+        idx_new_c = np.argmax(result_waves[0, 0, :256])
+        idx_new_f = np.argmax(result_waves[0, 0, 256:])
 
         new_sample = int(idx_old_c * 256 + idx_new_f) - 32768
         new_sample = min(32767, max(-32767, new_sample))
@@ -108,10 +106,10 @@ def generate(session, model, initial_state, out_wave_path):
         idx_old_f = idx_new_f
         idx_old_c = idx_new_c
 
-        source_waves = np.zeros((1, 512))
+        source_waves = np.zeros((1, 1, 512))
 
-        source_waves[0, idx_new_f] = 1.0
-        source_waves[0, idx_new_c + 256] = 1.0
+        source_waves[0, 0, idx_new_c] = 1.0
+        source_waves[0, 0, idx_new_f + 256] = 1.0
 
         if i % 1000 == 0:
             print('[{}]: {}, {}'.format(i, idx_old_c, idx_old_f))
@@ -128,17 +126,12 @@ def main(_):
     FLAGS = tf.app.flags.FLAGS
 
     if FLAGS.generate:
-        model = build_generating_model(FLAGS.state_size)
+        FLAGS.batch_size = 1
 
-        initial_state = np.random.random((1, FLAGS.state_size))
-    else:
-        model = build_training_model(
-            FLAGS.training_data_path,
-            FLAGS.state_size,
-            FLAGS.batch_size,
-            FLAGS.num_step_samples)
+    model = model_wavernn.build_model(
+        FLAGS.num_step_samples, FLAGS.state_size, not FLAGS.generate)
 
-        initial_state = np.zeros((FLAGS.batch_size, FLAGS.state_size))
+    initial_state = np.random.random((FLAGS.batch_size, FLAGS.state_size))
 
     source_ckpt_path = tf.train.latest_checkpoint(FLAGS.ckpt_path)
     target_ckpt_path = os.path.join(FLAGS.ckpt_path, 'model.ckpt')

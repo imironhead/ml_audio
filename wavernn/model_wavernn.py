@@ -62,20 +62,20 @@ def build_cell_function(state_size):
         with tf.variable_scope('wavernn_cell', reuse=tf.AUTO_REUSE):
             u_c = tf.nn.sigmoid(dense(state, x_c, None, 'u_u'))
             r_c = tf.nn.sigmoid(dense(state, x_c, None, 'r_u'))
-            e_c = tf.nn.tanh(dense(state, x_c, r_c, 'r_u'))
+            e_c = tf.nn.tanh(dense(state, x_c, r_c, 'e_u'))
 
             state_c = state_c * u_c - e_c * (u_c - 1.0)
 
             p_c = predict(state_c, 'predict_c')
 
-            # NOTE: predict fine part
+            # NOTE: predict coarse part
             p_t = tf.nn.softmax(p_c)
 
             x_f = tf.concat([x, p_t], axis=-1)
 
             u_f = tf.nn.sigmoid(dense(state, x_f, None, 'u_l'))
             r_f = tf.nn.sigmoid(dense(state, x_f, None, 'r_l'))
-            e_f = tf.nn.tanh(dense(state, x_f, r_f, 'r_l'))
+            e_f = tf.nn.tanh(dense(state, x_f, r_f, 'e_l'))
 
             state_f = state_f * u_f - e_f * (u_f - 1.0)
 
@@ -89,10 +89,15 @@ def build_cell_function(state_size):
     return cell
 
 
-def build_model(source_waves, state_size):
+def build_model(step_size, state_size, training):
     """
     """
-    source_waves = tf.placeholder(shape=[None, 33, 512], dtype=tf.float32)
+    # NOTE: sanity check, one step for generation
+    if not training:
+        step_size = 1
+
+    source_waves = tf.placeholder(
+        shape=[None, step_size, 512], dtype=tf.float32)
 
     # NOTE: tensors shape should be [N, T, D]
     #       N: batch size
@@ -107,35 +112,48 @@ def build_model(source_waves, state_size):
     state = initial_state = tf.placeholder(
         shape=[None, state_size], dtype=tf.float32)
 
-    # NOTE: collect loss from each time step
-    losses = []
-
     # NOTE: collect result samples
-    results = []
+    c_results = []
+    f_results = []
 
-    # TODO: for generating
-    for i in range(len(xs) - 1):
-        # NOTE: split into fine(t) & coarse(t+1)
-        pc_label, pf_label = tf.split(xs[i + 1], 2, axis=1)
+    # NOTE: do recurrence
+    for x in xs:
+        pc_guess, pf_guess, state = cell_function(x, state)
 
-        # NOTE: use fine(t-1) & coarse(t) to infer fine(t) & coarse(t+1)
-        pc_guess, pf_guess, state = cell_function(xs[i], state)
+        c_results.append(pc_guess)
+        f_results.append(pf_guess)
 
-        # NOTE: collect result wave samples (as format of input tensors)
-        results.append(tf.concat([pf_guess, pc_guess], axis=1))
+    result_waves_c = tf.stack(c_results, axis=1)
+    result_waves_f = tf.stack(f_results, axis=1)
 
-        # NOTE: softmax loss for predicting fine(t)
-        loss_f = tf.losses.softmax_cross_entropy(pf_label, pf_guess)
+    model = {
+        'head_state': initial_state,
+        'tail_state': state,
+        'source_waves': source_waves,
+    }
 
-        # NOTE: softmax loss for predicting coarse(t+1)
-        loss_c = tf.losses.softmax_cross_entropy(pc_label, pc_guess)
+    if not training:
+        c_indices = tf.argmax(result_waves_c, axis=-1)
+        f_indices = tf.argmax(result_waves_f, axis=-1)
 
-        losses.append(loss_f + loss_c)
+        c_onehot = tf.one_hot(c_indices, 256)
+        f_onehot = tf.one_hot(f_indices, 256)
 
-    result_waves = tf.stack(results, axis=1)
+        result_waves = tf.concat([c_onehot, f_onehot], axis=2)
 
-    # NOTE: random guess -> 0.69314
-    loss = tf.reduce_mean(losses)
+        model['result_waves'] = result_waves
+
+        return model
+
+    # NOTE: build training part
+    target_waves = tf.placeholder(
+        shape=[None, step_size, 512], dtype=tf.float32)
+
+    target_waves_c, target_waves_f = tf.split(target_waves, 2, axis=-1)
+
+    loss = \
+        tf.losses.softmax_cross_entropy(target_waves_c, result_waves_c) + \
+        tf.losses.softmax_cross_entropy(target_waves_f, result_waves_f)
 
     # NOTE: trainer
     step = tf.train.get_or_create_global_step()
@@ -151,16 +169,13 @@ def build_model(source_waves, state_size):
         .AdamOptimizer(learning_rate=learning_rate) \
         .minimize(loss, global_step=step)
 
-    return {
-        'initial_state': initial_state,
-        'step': step,
-        'loss': loss,
-        'state': state,
-        'trainer': trainer,
-        'learning_rate': learning_rate,
-        'source_waves': source_waves,
-        'result_waves': result_waves,
-    }
+    model['target_waves'] = target_waves
+    model['learning_rate'] = learning_rate
+    model['trainer'] = trainer
+    model['loss'] = loss
+    model['step'] = step
+
+    return model
 
 
 def build_generative_model(state_size):
@@ -172,7 +187,7 @@ def build_generative_model(state_size):
     source_waves = tf.placeholder(shape=[None, 512], dtype=tf.float32)
 
     # NOTE: pad 0 as placeholder of c(t) which is masked for predicting c(t)
-    tensors = tf.pad(source_waves, [[0, 0], [0, 256]])
+#   tensors = tf.pad(source_waves, [[0, 0], [0, 256]])
 
     # NOTE: build a function to build rnn cells
     cell_function = build_cell_function(state_size=state_size)
@@ -181,15 +196,8 @@ def build_generative_model(state_size):
     initial_state = tf.placeholder(shape=[None, state_size], dtype=tf.float32)
 
     # NOTE: use fine(t-1) & coarse(t-1) to infer coarse(t)
-    pc_guess, pf_guess, temp_state = cell_function(tensors, initial_state)
 
-    c_indices = tf.argmax(pc_guess, axis=-1)
-
-    c_onehot = tf.one_hot(c_indices, 256)
-
-    tensors = tf.concat([source_waves, c_onehot], axis=1)
-
-    pc_guess, pf_guess, state = cell_function(tensors, initial_state)
+    pc_guess, pf_guess, state = cell_function(source_waves, initial_state)
 
     c_indices = tf.argmax(pc_guess, axis=-1)
     f_indices = tf.argmax(pf_guess, axis=-1)
