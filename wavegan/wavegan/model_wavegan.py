@@ -26,7 +26,12 @@ def phase_shuffle(tensor, n=0):
     return tensor
 
 
-def build_discriminator(tensor, num_channels, model_size, scope_name):
+def build_discriminator(
+        tensor,
+        num_channels,
+        model_size,
+        shuffle_phase,
+        scope_name):
     """
     arXiv:1802.04208v1, table 4
 
@@ -50,8 +55,8 @@ def build_discriminator(tensor, num_channels, model_size, scope_name):
                 activation=tf.nn.leaky_relu,
                 kernel_initializer=initializer)
 
-#           if out_dim < 16:
-#               tensor = phase_shuffle(tensor, 2)
+            if shuffle_phase and out_dim < 16:
+                tensor = phase_shuffle(tensor, 2)
 
         tensor = tf.layers.flatten(tensor)
 
@@ -120,7 +125,7 @@ def build_generator(tensor, num_channels, model_size, scope_name):
     return tensor
 
 
-def build_model(seed, real, num_channels, model_size):
+def build_model(seed, real, num_channels, model_size, shuffle_phase):
     """
     arXiv:1704.00028
     Improved training of Wasserstein GANs
@@ -143,17 +148,20 @@ def build_model(seed, real, num_channels, model_size):
     step = tf.train.get_or_create_global_step()
 
     # NOTE: build the discriminator to judge the real data.
-    d_real = build_discriminator(real, num_channels, model_size, 'd_')
+    d_real = build_discriminator(
+        real, num_channels, model_size, shuffle_phase, 'd_')
 
     # NOTE: build the discriminator to judge the fake data.
     #       judge both real and fake data with the same network (shared).
-    d_fake = build_discriminator(fake, num_channels, model_size, 'd_')
+    d_fake = build_discriminator(
+        fake, num_channels, model_size, shuffle_phase, 'd_')
 
     # NOTE: gradient penalty
     alpha = tf.random_uniform([tf.shape(seed)[0], 1, 1])
     inter = fake + alpha * (real - fake)
 
-    d_inte = build_discriminator(inter, num_channels, model_size, 'd_')
+    d_inte = build_discriminator(
+        inter, num_channels, model_size, shuffle_phase, 'd_')
 
     gradients = tf.gradients(d_inte, inter)[0]
 

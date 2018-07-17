@@ -31,7 +31,7 @@ def build_training_model():
         shape=[FLAGS.batch_size, FLAGS.seed_size], minval=-1.0, maxval=1.0)
 
     model = model_wavegan.build_model(
-        seed, waves, FLAGS.num_channels, FLAGS.model_size)
+        seed, waves, FLAGS.num_channels, FLAGS.model_size, FLAGS.shuffle_phase)
 
     model['data_iterator'] = data_iterator
 
@@ -129,6 +129,7 @@ if __name__ == '__main__':
     tf.app.flags.DEFINE_integer('num_source_samples', 15000, '')
     tf.app.flags.DEFINE_integer('num_target_samples', 16384, '')
 
+    tf.app.flags.DEFINE_boolean('shuffle_phase', False, '')
     tf.app.flags.DEFINE_boolean('use_sc09', False, '')
 
     tf.app.run()
