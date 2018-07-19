@@ -1,6 +1,6 @@
-Replicated "Synthesizing Audio with Generative Adversarial Networks"
+# Replicated "Synthesizing Audio with Generative Adversarial Networks"
 
-# Train
+## Train
 
 ```
 python -m wavegan.experiment_train \
@@ -33,7 +33,7 @@ python -m wavegan.experiment_train \
 * use_speech_commands: train_dir_path contains folders of speech commands (e.g. zero)
 * use_sc09: use subset of speech commands (zero to nine)
 
-# Results (trained on SC09 without phase shuffle)
+## Results (trained on SC09 without phase shuffle)
 
 * [farth](../assets/wavegan_00_farth.wav)
 * [vault](../assets/wavegan_01_vault.wav)
@@ -42,5 +42,5 @@ python -m wavegan.experiment_train \
 * [funk](../assets/wavegan_04_funk.wav)
 * [six](../assets/wavegan_05_six.wav)
 
-# NOTE
+## NOTE
 [Official implementation](https://github.com/chrisdonahue/wavegan).
