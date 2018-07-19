@@ -4,7 +4,6 @@ import os
 
 import tensorflow as tf
 
-import wavegan.dataset_speech_commands as dataset
 import wavegan.model_wavegan as model_wavegan
 
 
@@ -17,21 +16,36 @@ def build_training_model():
     FLAGS.num_target_samples = 16384
     FLAGS.num_source_samples = min(16384, max(0, FLAGS.num_source_samples))
 
-    data_iterator = dataset.build_waves_batch_iterator(
-        FLAGS.train_dir_path,
-        FLAGS.use_sc09,
-        FLAGS.num_source_samples,
-        FLAGS.num_target_samples,
-        FLAGS.batch_size)
+    if FLAGS.use_speech_commands:
+        import wavegan.dataset_speech_commands as dataset
+
+        data_iterator = dataset.build_waves_batch_iterator(
+            FLAGS.train_dir_path,
+            FLAGS.use_sc09,
+            FLAGS.num_source_samples,
+            FLAGS.num_target_samples,
+            FLAGS.batch_size)
+    else:
+        import wavegan.dataset_waves as dataset
+
+        data_iterator = dataset.build_waves_batch_iterator(
+            FLAGS.train_dir_path,
+            FLAGS.num_target_samples,
+            FLAGS.batch_size)
 
     waves = data_iterator.get_next()
 
     # NOTE: random vector for the generator
-    seed = tf.random_uniform(
+    seeds = tf.random_uniform(
         shape=[FLAGS.batch_size, FLAGS.seed_size], minval=-1.0, maxval=1.0)
 
     model = model_wavegan.build_model(
-        seed, waves, FLAGS.num_channels, FLAGS.model_size, FLAGS.shuffle_phase)
+        seeds,
+        waves,
+        FLAGS.num_channels,
+        FLAGS.model_size,
+        FLAGS.gradient_penalty_lambda,
+        FLAGS.shuffle_phase)
 
     model['data_iterator'] = data_iterator
 
@@ -41,7 +55,7 @@ def build_training_model():
 def build_summaries(model):
     """
     """
-    summary_audio = tf.summary.audio('audio', model['fake'][:2], 16000)
+    summary_audio = tf.summary.audio('audio', model['fakes'][:2], 16000)
     summary_d_loss = tf.summary.scalar('discriminator_loss', model['d_loss'])
     summary_g_loss = tf.summary.scalar('generator_loss', model['g_loss'])
 
@@ -122,6 +136,8 @@ if __name__ == '__main__':
     tf.app.flags.DEFINE_string('ckpt_path', None, '')
     tf.app.flags.DEFINE_string('log_path', None, '')
 
+    tf.app.flags.DEFINE_float('gradient_penalty_lambda', 1.0, '')
+
     tf.app.flags.DEFINE_integer('seed_size', 100, '')
     tf.app.flags.DEFINE_integer('model_size', 64, '')
     tf.app.flags.DEFINE_integer('batch_size', 64, '')
@@ -130,6 +146,7 @@ if __name__ == '__main__':
     tf.app.flags.DEFINE_integer('num_target_samples', 16384, '')
 
     tf.app.flags.DEFINE_boolean('shuffle_phase', False, '')
+    tf.app.flags.DEFINE_boolean('use_speech_commands', True, '')
     tf.app.flags.DEFINE_boolean('use_sc09', False, '')
 
     tf.app.run()

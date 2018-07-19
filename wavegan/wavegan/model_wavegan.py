@@ -125,40 +125,46 @@ def build_generator(tensor, num_channels, model_size, scope_name):
     return tensor
 
 
-def build_model(seed, real, num_channels, model_size, shuffle_phase):
+def build_model(
+        seeds,
+        reals,
+        num_channels,
+        model_size,
+        gradient_penalty_lambda,
+        shuffle_phase):
     """
     arXiv:1704.00028
     Improved training of Wasserstein GANs
 
-    seed: random tensors as input of the generator
-    real: tensors of real wave. None if discriminator is not needed.
+    seeds: random tensors as input of the generator
+    reals: tensors of real wave. None if discriminator is not needed.
     """
     model = {}
 
     # NOTE: build the generator to generate images from random seeds.
-    fake = build_generator(seed, num_channels, model_size, 'g_')
+    fakes = build_generator(seeds, num_channels, model_size, 'g_')
 
-    model['seed'] = seed
-    model['fake'] = fake
+    model['seeds'] = seeds
+    model['fakes'] = fakes
 
     # NOTE: build training model if real tensors is not None
-    if real is None:
+    if reals is None:
         return model
 
     step = tf.train.get_or_create_global_step()
 
     # NOTE: build the discriminator to judge the real data.
-    d_real = build_discriminator(
-        real, num_channels, model_size, shuffle_phase, 'd_')
+    d_reals = build_discriminator(
+        reals, num_channels, model_size, shuffle_phase, 'd_')
 
     # NOTE: build the discriminator to judge the fake data.
     #       judge both real and fake data with the same network (shared).
-    d_fake = build_discriminator(
-        fake, num_channels, model_size, shuffle_phase, 'd_')
+    d_fakes = build_discriminator(
+        fakes, num_channels, model_size, shuffle_phase, 'd_')
 
     # NOTE: gradient penalty
-    alpha = tf.random_uniform([tf.shape(seed)[0], 1, 1])
-    inter = fake + alpha * (real - fake)
+    alpha = tf.random_uniform([tf.shape(seeds)[0], 1, 1])
+    inter = fakes + alpha * (reals - fakes)
 
     d_inte = build_discriminator(
         inter, num_channels, model_size, shuffle_phase, 'd_')
@@ -170,9 +176,10 @@ def build_model(seed, real, num_channels, model_size, shuffle_phase):
     gradient_penalty = tf.reduce_mean((gradients_norm - 1.0) ** 2.0)
 
     # NOTE: loss
-    d_loss = tf.reduce_mean(d_fake - d_real) + 1.0 * gradient_penalty
+    d_loss = tf.reduce_mean(d_fakes - d_reals) + \
+        gradient_penalty_lambda * gradient_penalty
 
-    g_loss = -tf.reduce_mean(d_fake)
+    g_loss = -tf.reduce_mean(d_fakes)
 
     # NOTE: collect variables to separate g/d training op
     d_variables = []
@@ -200,7 +207,7 @@ def build_model(seed, real, num_channels, model_size, shuffle_phase):
         colocate_gradients_with_ops=True)
 
     model['step'] = step
-    model['real'] = real
+    model['reals'] = reals
     model['g_loss'] = g_loss
     model['d_loss'] = d_loss
     model['g_trainer'] = g_trainer

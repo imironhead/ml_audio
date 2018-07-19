@@ -86,7 +86,7 @@ def build_random_wave_generator(
 
             yield data
 
-    return random_waves 
+    return random_waves
 
 
 def build_waves_batch_iterator(
