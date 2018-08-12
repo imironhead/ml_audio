@@ -14,13 +14,10 @@ def build_model():
     """
     FLAGS = tf.app.flags.FLAGS
 
-    model = model_fftnet.build_model(
-        True,
-        5000,
-        5000,
-        sample_size=FLAGS.wave_quantization_size,
-        condition_size=FLAGS.num_mfccs,
-        hidden_size=FLAGS.hidden_size,
+    model = model_fftnet.build_training_model(
+        num_samples=FLAGS.samples_size,
+        num_quantization_levels=FLAGS.num_quantization_levels,
+        condition_size=FLAGS.condition_size,
         num_layers=FLAGS.num_layers)
 
     return model
@@ -34,19 +31,13 @@ def build_dataset():
     target_size = FLAGS.samples_size
 
     batches = dataset.wave_batches(
-        FLAGS.train_dir_path,
-        FLAGS.batchs_size,
-        FLAGS.samples_size + 1,
-        FLAGS.zeros_size,
-        FLAGS.num_mfccs,
-        FLAGS.fft_window_size,
-        FLAGS.fft_hop_length)
+        FLAGS.train_dir_path, FLAGS.batchs_size, FLAGS.samples_size)
 
     for clean_waves, noise_waves, features in batches:
-        conditions = features[:, 1:, :]
-
-        targets = clean_waves[:, 1:, :]
-        sources = noise_waves[:, :-1, :]
+        # NOTE: use noisy input to infer clean output
+        sources = noise_waves
+        targets = clean_waves
+        conditions = features / FLAGS.condition_scale
 
         yield sources, conditions, targets
 
@@ -84,9 +75,9 @@ def main(_):
         while True:
             step = session.run(model['step'])
 
-#           learning_rate = FLAGS.learning_rate * (0.95 ** (step // 10000))
+            learning_rate = FLAGS.learning_rate * (0.5 ** (step // 100000))
 
-            learning_rate = FLAGS.learning_rate
+#           learning_rate = FLAGS.learning_rate
 
             if step > 60000 and step % 20000 == 0:
                 saver.save(session, target_ckpt_path, global_step=step)
@@ -120,31 +111,25 @@ if __name__ == '__main__':
 
     tf.app.flags.DEFINE_integer('batchs_size', 5, '')
     tf.app.flags.DEFINE_integer('samples_size', 5000, '')
-    tf.app.flags.DEFINE_integer('zeros_size', 2048, '')
 
     # NOTE: FFTNET, 3.1, experimental setup,
     #       the waveforms are quantized to 256 categorical values based on
     #       mu-law.
-    tf.app.flags.DEFINE_integer('wave_quantization_size', 256, '')
+    tf.app.flags.DEFINE_integer('num_quantization_levels', 256, '')
 
     # NOTE: FFTNET, 2.2
     #       Then we extract the MCC and F0 features for each overlapping
     #       window. For the ht corresponding to the window centers, we assign
     #       the computed MCC and F0 values (26 dimensions in total).
     # NOTE: I do not know how to get F0, use mfcc instead.
-    tf.app.flags.DEFINE_integer('num_mfccs', 32, '')
+    tf.app.flags.DEFINE_integer('condition_size', 32, '')
 
-    # NOTE: FFTNET, 2.2
-    #       In our experiments, the auxiliary condition is obtained as follows:
-    #       first we take an analysis window of size 400 every 160 samples.
-    tf.app.flags.DEFINE_integer('fft_window_size', 400, '')
-    tf.app.flags.DEFINE_integer('fft_hop_length', 160, '')
+    tf.app.flags.DEFINE_float('condition_scale', 1000.0, '')
 
     # NOTE: FFTNET, 3.1
     #       The FFTNet implementation contains 11 FFT-layers with 256 channels,
     #       which also has a receptive field of 2048.
     tf.app.flags.DEFINE_integer('num_layers', 11, '')
-    tf.app.flags.DEFINE_integer('hidden_size', 256, '')
 
     tf.app.run()
 
