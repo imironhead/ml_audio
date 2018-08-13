@@ -247,6 +247,11 @@ def build_generating_model(
             num_quantization_levels,
             'fft_{}'.format(i))
 
+    r_source_tensor = tf.layers.dense(
+        r_source_tensor,
+        units=num_quantization_levels,
+        activation=None)
+
     result_tensor = tf.nn.softmax(2.0 * r_source_tensor)
 
     r_source_tensors = tf.concat(r_source_tensors, axis=0)

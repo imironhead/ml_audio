@@ -33,12 +33,6 @@ def prepare_conditions():
 
     wave = wave.astype(np.float32) / 32768.0
 
-    wave = np.pad(
-        wave,
-        [2 ** FLAGS.num_layers, 0],
-        'constant',
-        constant_values=[0.0, 0.0])
-
     conditions = dataset.dense_features(
         wave,
         sr,
@@ -47,7 +41,15 @@ def prepare_conditions():
         FLAGS.fft_window_size,
         FLAGS.fft_hop_length)
 
-    return conditions / FLAGS.condition_scale
+    conditions = np.pad(
+        conditions,
+        [[2 ** FLAGS.num_layers, 0], [0, 0]],
+        'constant',
+        constant_values=[[0.0, 0.0], [0.0, 0.0]])
+
+    conditions = conditions / FLAGS.condition_scale
+
+    return conditions
 
 
 def prepare_source_queues():
@@ -78,7 +80,7 @@ def main(_):
 
     model = build_model()
 
-    target_num_samples = 16000 * FLAGS.len_seconds
+    target_num_samples = int(16000 * FLAGS.length_seconds)
 
     l_source_tensors = np.zeros(
         (FLAGS.num_layers + 1, FLAGS.num_quantization_levels), dtype=np.float32)
@@ -97,7 +99,7 @@ def main(_):
         # NOTE: skip padded zeros
         t = 2 ** FLAGS.num_layers
 
-        while len(generated_samples) < target_num_samples:
+        while t < len(conditions):
             if len(generated_samples) % 100 == 0:
                 print('generating samples[{}]'.format(len(generated_samples)))
 
@@ -116,6 +118,9 @@ def main(_):
 
                 l_source_tensors[index] = source_queues[index][0]
                 l_condition_tensors[index] = conditions[t - 2 ** i]
+
+            # NOTE: advance on timeline
+            t = t + 1
 
             feeds = {
                 model['current_source_tensor']: current_source_tensor,
@@ -163,7 +168,7 @@ if __name__ == '__main__':
     tf.app.flags.DEFINE_string('result_wave_path', None, '')
     tf.app.flags.DEFINE_string('feature_name', None, '')
 
-    tf.app.flags.DEFINE_integer('len_seconds', 2, '')
+    tf.app.flags.DEFINE_float('length_seconds', 2.0, '')
 
     # NOTE: FFTNET, 3.1, experimental setup,
     #       the waveforms are quantized to 256 categorical values based on

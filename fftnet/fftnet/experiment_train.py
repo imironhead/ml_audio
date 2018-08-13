@@ -72,6 +72,12 @@ def main(_):
         else:
             tf.train.Saver().restore(session, source_ckpt_path)
 
+        # NOTE: give up overlapped old data
+        step = session.run(model['step'])
+
+        reporter.add_session_log(
+            tf.SessionLog(status=tf.SessionLog.START), global_step=step)
+
         while True:
             step = session.run(model['step'])
 
