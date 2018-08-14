@@ -80,8 +80,6 @@ def main(_):
 
     model = build_model()
 
-    target_num_samples = int(16000 * FLAGS.length_seconds)
-
     l_source_tensors = np.zeros(
         (FLAGS.num_layers + 1, FLAGS.num_quantization_levels), dtype=np.float32)
 
@@ -167,8 +165,6 @@ if __name__ == '__main__':
     tf.app.flags.DEFINE_string('source_wave_path', None, '')
     tf.app.flags.DEFINE_string('result_wave_path', None, '')
     tf.app.flags.DEFINE_string('feature_name', None, '')
-
-    tf.app.flags.DEFINE_float('length_seconds', 2.0, '')
 
     # NOTE: FFTNET, 3.1, experimental setup,
     #       the waveforms are quantized to 256 categorical values based on
