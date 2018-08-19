@@ -81,11 +81,9 @@ def main(_):
         while True:
             step = session.run(model['step'])
 
-            learning_rate = FLAGS.learning_rate * (0.5 ** (step // 100000))
+            learning_rate = FLAGS.learning_rate * (0.5 ** (step // 80000))
 
-#           learning_rate = FLAGS.learning_rate
-
-            if step > 60000 and step % 20000 == 0:
+            if step > 90000 and step % 10000 == 0:
                 saver.save(session, target_ckpt_path, global_step=step)
 
             source_waves, conditions, target_waves = next(training_batches)

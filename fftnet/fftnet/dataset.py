@@ -9,14 +9,14 @@ import scipy.io
 import tensorflow as tf
 
 
-def inject_noise(wave):
+def inject_noise(wave, scale=1/256):
     """
     FFTNET, 2.3.3, injected noise
 
     we inject gaussian noise centered at 0 with a standard devaition of 1/256
     (based on 8 bit quantization).
     """
-    noise = np.random.normal(loc=0.0, scale=1/256, size=wave.shape)
+    noise = np.random.normal(loc=0.0, scale=scale, size=wave.shape)
 
     return wave + noise
 
@@ -201,6 +201,22 @@ def preprocess_wave(
     # NOTE: FFTNET, 2.2
     #       For the ht corresponding to the window centers, we assign the
     #       computed MCC and F0 values (26 dimensions in total).
+    #
+    # NOTE: https://github.com/librosa/librosa/blob/master/librosa/feature/spectral.py
+    #       melspectrogram use _spectrogram
+    #
+    #       https://github.com/librosa/librosa/blob/master/librosa/core/spectrum.py
+    #       _spectrogram use stft with default parameters
+    #       stft has a parameter center whose default is True
+    #       which means:
+    #       the signal `y` is padded so that frame `D[:, t]` is centered at
+    #       `y[t * hop_length]`
+    #       which means the returned features is aligned already.
+    #
+    # NOTE: skip half window size to make sure all features are build on whole
+    #       size window
+    features = features[fft_window_size // 2:]
+
     wave = wave[fft_window_size // 2:]
 
     # NOTE: align length

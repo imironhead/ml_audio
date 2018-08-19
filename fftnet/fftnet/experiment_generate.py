@@ -90,7 +90,10 @@ def main(_):
     generated_samples = [128]
 
     with tf.Session() as session:
-        ckpt_path = tf.train.latest_checkpoint(FLAGS.ckpt_path)
+        if tf.gfile.IsDirectory(FLAGS.ckpt_path):
+            ckpt_path = tf.train.latest_checkpoint(FLAGS.ckpt_path)
+        else:
+            ckpt_path = FLAGS.ckpt_path
 
         tf.train.Saver().restore(session, ckpt_path)
 
