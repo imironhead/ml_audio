@@ -215,7 +215,8 @@ def build_training_model(
 def build_generating_model(
         num_quantization_levels=256,
         condition_size=20,
-        num_layers=11):
+        num_layers=11,
+        logits_scaling_factor=2.0):
     """
     """
     l_source_tensors = tf.placeholder(
@@ -252,7 +253,7 @@ def build_generating_model(
         units=num_quantization_levels,
         activation=None)
 
-    result_tensor = tf.nn.softmax(2.0 * r_source_tensor)
+    result_tensor = tf.nn.softmax(logits_scaling_factor * r_source_tensor)
 
     r_source_tensors = tf.concat(r_source_tensors, axis=0)
 

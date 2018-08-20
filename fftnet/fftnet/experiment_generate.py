@@ -18,7 +18,8 @@ def build_model():
     model = model_fftnet.build_generating_model(
         num_quantization_levels=FLAGS.num_quantization_levels,
         condition_size=FLAGS.condition_size,
-        num_layers=FLAGS.num_layers)
+        num_layers=FLAGS.num_layers,
+        logits_scaling_factor=FLAGS.logits_scaling_factor)
 
     return model
 
@@ -193,6 +194,19 @@ if __name__ == '__main__':
     #       The FFTNet implementation contains 11 FFT-layers with 256 channels,
     #       which also has a receptive field of 2048.
     tf.app.flags.DEFINE_integer('num_layers', 11, '')
+
+    # NOTE: FFTNET, 2.3.2,
+    #       For unvoiced sounds, we randomly sample from the posterior
+    #       distribution; and for voiced sounds, we take the normalized logits
+    #       (the input values before softmax), multiply it by a constant c > 1
+    #       and pass it through the softmax layer to obtain a posterior
+    #       distribution where random sampling is performed. In this way, the
+    #       posterior distribution will look steeper while the original noise
+    #       distribution is preserved. In this work, we use c=2.
+    tf.app.flags.DEFINE_float(
+        'logits_scaling_factor',
+        2.0,
+        'scaling factor for logits before the softmax layer')
 
     tf.app.run()
 
