@@ -1,6 +1,7 @@
 """
 """
 import os
+import time
 
 import numpy as np
 import scipy.io.wavfile
@@ -70,7 +71,12 @@ def prepare_source_queues():
     return queues
 
 
-def main(_):
+def generate_samples_cpu():
+    """
+    """
+
+
+def generate_samples_gpu():
     """
     """
     FLAGS = tf.app.flags.FLAGS
@@ -98,6 +104,9 @@ def main(_):
 
         tf.train.Saver().restore(session, ckpt_path)
 
+        # NOTE: log performance
+        time_begin = time.time()
+
         # NOTE: skip padded zeros
         t = 2 ** FLAGS.num_layers
 
@@ -117,12 +126,10 @@ def main(_):
             # NOTE: build source & condition tensors
             for i in range(FLAGS.num_layers, -1, -1):
                 index = FLAGS.num_layers - i
+                shift = t % source_queues[index].shape[0]
 
-                l_source_tensors[index] = source_queues[index][0]
+                l_source_tensors[index] = source_queues[index][shift]
                 l_condition_tensors[index] = conditions[t - 2 ** i]
-
-            # NOTE: advance on timeline
-            t = t + 1
 
             feeds = {
                 model['current_source_tensor']: current_source_tensor,
@@ -148,9 +155,31 @@ def main(_):
             # NOTE: push newly generated intermediate data into queues
             for i in range(FLAGS.num_layers, -1, -1):
                 index = FLAGS.num_layers - i
+                shift = t % source_queues[index].shape[0]
 
-                source_queues[index][:-1] = source_queues[index][1:]
-                source_queues[index][-1] = fetched['r_source_tensors'][index]
+                source_queues[index][shift] = fetched['r_source_tensors'][index]
+
+            # NOTE: advance on timeline
+            t = t + 1
+
+    time_spent = time.time() - time_begin
+
+    print('performance:\n')
+    print('{} samples / {}'.format(len(generated_samples), time_spent))
+    print('16000 samples take {} s'.format(time_spent * 16000 / len(generated_samples)))
+
+    return generated_samples
+
+
+def main(_):
+    """
+    """
+    FLAGS = tf.app.flags.FLAGS
+
+    if FLAGS.use_cpu:
+        generated_samples = generate_samples_cpu()
+    else:
+        generated_samples = generate_samples_gpu()
 
     # NOTE: decode generated samples
     wave = np.array(generated_samples, dtype=np.float32)
@@ -207,6 +236,11 @@ if __name__ == '__main__':
         'logits_scaling_factor',
         2.0,
         'scaling factor for logits before the softmax layer')
+
+    tf.app.flags.DEFINE_boolean(
+        'use_cpu',
+        False,
+        'use numpy instead od tensorflow to generate the wave')
 
     tf.app.run()
 
