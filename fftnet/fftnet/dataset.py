@@ -5,6 +5,8 @@ import os
 import librosa
 import librosa.feature
 import numpy as np
+import pyworld
+import scipy
 import scipy.io
 import tensorflow as tf
 
@@ -137,7 +139,30 @@ def dense_features(
         fft_hop_length):
     """
     """
-    if feature_name == 'mfcc':
+    if feature_name == 'f0mfcc':
+        f0, time_axis = pyworld.harvest(
+            wave.astype(np.float),
+            sampling_rate,
+            f0_floor=40,
+            f0_ceil=500,
+            frame_period=1000 * fft_hop_length / sampling_rate)
+
+        mfcc = librosa.feature.mfcc(
+            y=wave,
+            sr=sampling_rate,
+            n_mfcc=feature_size - 1,
+            n_fft=fft_window_size,
+            hop_length=fft_hop_length)
+
+        length = min(f0.shape[0], mfcc.shape[1])
+
+        f0 = f0[:length]
+        mfcc = mfcc[:, :length]
+
+        f0 = np.reshape(f0, [1, length])
+
+        features = np.concatenate([f0, mfcc], axis=0)
+    elif feature_name == 'mfcc':
         features = librosa.feature.mfcc(
             y=wave,
             sr=sampling_rate,
@@ -156,21 +181,16 @@ def dense_features(
 
     features = features.T
 
-    num_samples = (features.shape[0] - 1) * fft_hop_length
-
     # NOTE: FFTNET, 2.2
     #       For the ht that are not located at the window centers, we linearly
     #       interpolate their values based on the assigned ht in the last step.
-    interp_features = np.zeros((num_samples, feature_size), dtype=np.float32)
+    ts = np.arange(0, features.shape[0] * fft_hop_length, fft_hop_length)
 
-    for t in range(num_samples):
-        idx = t // fft_hop_length
-        mod = t % fft_hop_length
+    interp = scipy.interpolate.interp1d(ts, features, axis=0)
 
-        alpha = mod / fft_hop_length
+    ts = np.arange(0, (features.shape[0] - 1) * fft_hop_length, 1)
 
-        interp_features[t] = \
-            (1.0 - alpha) * features[idx] + alpha * features[idx + 1]
+    interp_features = interp(ts)
 
     return interp_features
 

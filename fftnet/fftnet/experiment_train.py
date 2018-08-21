@@ -81,10 +81,16 @@ def main(_):
         while True:
             step = session.run(model['step'])
 
-            learning_rate = FLAGS.learning_rate * (0.5 ** (step // 80000))
+            if step % 1000 == 0:
+                print('training: {}'.format(step))
 
             if step > 90000 and step % 10000 == 0:
                 saver.save(session, target_ckpt_path, global_step=step)
+
+            if step > FLAGS.max_training_step:
+                break
+
+            learning_rate = FLAGS.learning_rate * (0.5 ** (step // 80000))
 
             source_waves, conditions, target_waves = next(training_batches)
 
@@ -115,6 +121,7 @@ if __name__ == '__main__':
 
     tf.app.flags.DEFINE_integer('batchs_size', 5, '')
     tf.app.flags.DEFINE_integer('samples_size', 5000, '')
+    tf.app.flags.DEFINE_integer('max_training_step', 300_000, '')
 
     # NOTE: FFTNET, 3.1, experimental setup,
     #       the waveforms are quantized to 256 categorical values based on
