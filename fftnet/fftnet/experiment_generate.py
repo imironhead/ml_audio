@@ -71,9 +71,165 @@ def prepare_source_queues():
     return queues
 
 
+def numpy_fftnet(
+        variables, source_tensor, source_queues, conditions, t):
+    """
+    """
+    FLAGS = tf.app.flags.FLAGS
+
+    for i in range(FLAGS.num_layers, -1, -1):
+        index = FLAGS.num_layers - i
+
+        offset_source = t % source_queues[index].shape[0]
+
+        offset_condition = t - 2 ** i
+
+        result_tensor = variables['fft_{}/dense_total/bias:0'.format(i)].copy()
+
+        result_tensor += np.matmul(
+            source_queues[index][offset_source:offset_source+1],
+            variables['fft_{}/dense_l_samples/kernel:0'.format(i)])
+
+        result_tensor += np.matmul(
+            source_tensor,
+            variables['fft_{}/dense_r_samples/kernel:0'.format(i)])
+
+        result_tensor += np.matmul(
+            conditions[offset_condition:offset_condition+1],
+            variables['fft_{}/dense_l_conditions/kernel:0'.format(i)])
+
+        result_tensor += np.matmul(
+            conditions[t:t+1],
+            variables['fft_{}/dense_r_conditions/kernel:0'.format(i)])
+
+        result_tensor = np.maximum(result_tensor, 0.0, result_tensor)
+
+        result_tensor = np.matmul(
+            result_tensor,
+            variables['fft_{}/dense_merge/kernel:0'.format(i)])
+
+        result_tensor += variables['fft_{}/dense_merge/bias:0'.format(i)]
+
+        result_tensor = np.maximum(result_tensor, 0.0, result_tensor)
+
+        # NOTE: keep in queues
+        source_queues[index][offset_source] = source_tensor
+
+        source_tensor = result_tensor
+
+    result_tensor = np.matmul(result_tensor, variables['dense/kernel:0'])
+
+    result_tensor += variables['dense/bias:0']
+
+    # softmax
+    result_tensor *= FLAGS.logits_scaling_factor
+
+    # NOTE: prevent numerical error (overflow)
+    result_tensor -= np.max(result_tensor)
+
+    result_tensor = np.exp(result_tensor, result_tensor)
+
+    result_tensor /= np.sum(result_tensor)
+
+    return result_tensor
+
+
 def generate_samples_cpu():
     """
     """
+    FLAGS = tf.app.flags.FLAGS
+
+    # NOTE: read weights from the tensorflow checkpoint
+    model = build_model()
+
+    variables = {}
+
+    with tf.Session() as session:
+        # NOTE: restore the model weights
+        if tf.gfile.IsDirectory(FLAGS.ckpt_path):
+            ckpt_path = tf.train.latest_checkpoint(FLAGS.ckpt_path)
+        else:
+            ckpt_path = FLAGS.ckpt_path
+
+        tf.train.Saver().restore(session, ckpt_path)
+
+        # NOTE: collect all kernels & bias
+        trainable_variables = tf.trainable_variables()
+
+        for v in trainable_variables:
+            variables[v.name] = session.run(v)
+
+            if len(variables[v.name].shape) == 1:
+                variables[v.name] = np.reshape(variables[v.name], [1, -1])
+
+    # TODO: merge bias to a single one from the beginning (training model)
+    for i in range(FLAGS.num_layers + 1):
+        variables['fft_{}/dense_total/bias:0'.format(i)] = \
+            variables['fft_{}/dense_l_samples/bias:0'.format(i)] + \
+            variables['fft_{}/dense_r_samples/bias:0'.format(i)] + \
+            variables['fft_{}/dense_l_conditions/bias:0'.format(i)] + \
+            variables['fft_{}/dense_r_conditions/bias:0'.format(i)]
+
+        # TODO: no faster, why?
+#       variables['fft_{}/dense_total/kernel:0'.format(i)] = np.concatenate([
+#           variables['fft_{}/dense_r_samples/kernel:0'.format(i)],
+#           variables['fft_{}/dense_r_conditions/kernel:0'.format(i)],
+#           variables['fft_{}/dense_l_samples/kernel:0'.format(i)],
+#           variables['fft_{}/dense_l_conditions/kernel:0'.format(i)]], axis=0)
+
+    conditions = prepare_conditions()
+
+    source_queues = prepare_source_queues()
+
+    l_source_tensors = np.zeros(
+        (FLAGS.num_layers + 1, FLAGS.num_quantization_levels), dtype=np.float32)
+
+    l_condition_tensors = np.zeros(
+        (FLAGS.num_layers + 1, FLAGS.condition_size), dtype=np.float32)
+
+    # NOTE: 0 ~ 255
+    generated_samples = [128]
+
+    # NOTE: log performance
+    time_begin = time.time()
+
+    # NOTE: skip padded zeros
+    t = 2 ** FLAGS.num_layers
+
+    while t < len(conditions):
+        if len(generated_samples) % 500 == 0:
+            print('generating samples[{}]'.format(len(generated_samples)))
+
+        # NOTE: previous generated sample
+        source_tensor = np.zeros(
+            (1, FLAGS.num_quantization_levels), dtype=np.float32)
+
+        source_tensor[0, generated_samples[-1]] = 1.0
+
+        result_tensor = numpy_fftnet(
+            variables,
+            source_tensor,
+            source_queues,
+            conditions,
+            t)
+
+        # NOTE: sample the generated sample
+        m = np.random.choice(
+            np.arange(FLAGS.num_quantization_levels),
+            p=result_tensor[0])
+
+        generated_samples.append(m)
+
+        # NOTE: advance on timeline
+        t = t + 1
+
+    performance = (time.time() - time_begin) * 16_000 / len(generated_samples)
+
+    print('numpy')
+    print('{}'.format(FLAGS.source_wave_path))
+    print('{} seconds / 16000 samples'.format(performance))
+
+    return generated_samples
 
 
 def generate_samples_gpu():
@@ -97,6 +253,7 @@ def generate_samples_gpu():
     generated_samples = [128]
 
     with tf.Session() as session:
+        # NOTE: restore the model weights
         if tf.gfile.IsDirectory(FLAGS.ckpt_path):
             ckpt_path = tf.train.latest_checkpoint(FLAGS.ckpt_path)
         else:
@@ -111,7 +268,7 @@ def generate_samples_gpu():
         t = 2 ** FLAGS.num_layers
 
         while t < len(conditions):
-            if len(generated_samples) % 100 == 0:
+            if len(generated_samples) % 500 == 0:
                 print('generating samples[{}]'.format(len(generated_samples)))
 
             # NOTE: previous generated sample
@@ -154,19 +311,18 @@ def generate_samples_gpu():
 
             # NOTE: push newly generated intermediate data into queues
             for i in range(FLAGS.num_layers, -1, -1):
-                index = FLAGS.num_layers - i
-                shift = t % source_queues[index].shape[0]
+                shift = t % source_queues[i].shape[0]
 
-                source_queues[index][shift] = fetched['r_source_tensors'][index]
+                source_queues[i][shift] = fetched['r_source_tensors'][i]
 
             # NOTE: advance on timeline
             t = t + 1
 
-    time_spent = time.time() - time_begin
+    performance = (time.time() - time_begin) * 16_000 / len(generated_samples)
 
-    print('performance:\n')
-    print('{} samples / {}'.format(len(generated_samples), time_spent))
-    print('16000 samples take {} s'.format(time_spent * 16000 / len(generated_samples)))
+    print('tensorflow')
+    print('{}'.format(FLAGS.source_wave_path))
+    print('{} seconds / 16000 samples'.format(performance))
 
     return generated_samples
 
