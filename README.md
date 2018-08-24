@@ -1,3 +1,4 @@
 # Replicated Results of Audio Related Papers
 
-* **wavegan**: Synthesizing Audio with Generative Adversarial Networks
+* **fftnet** : FFTNET: A Real-Time Speaker-Dependent Neural Vocoder
+* **wavegan** : Synthesizing Audio with Generative Adversarial Networks
