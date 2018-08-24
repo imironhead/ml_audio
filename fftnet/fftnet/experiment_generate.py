@@ -84,7 +84,8 @@ def numpy_fftnet(
 
         offset_condition = t - 2 ** i
 
-        result_tensor = variables['fft_{}/dense_total/bias:0'.format(i)].copy()
+        result_tensor = \
+            variables['fft_{}/dense_l_samples/bias:0'.format(i)].copy()
 
         result_tensor += np.matmul(
             source_queues[index][offset_source:offset_source+1],
@@ -161,21 +162,6 @@ def generate_samples_cpu():
 
             if len(variables[v.name].shape) == 1:
                 variables[v.name] = np.reshape(variables[v.name], [1, -1])
-
-    # TODO: merge bias to a single one from the beginning (training model)
-    for i in range(FLAGS.num_layers + 1):
-        variables['fft_{}/dense_total/bias:0'.format(i)] = \
-            variables['fft_{}/dense_l_samples/bias:0'.format(i)] + \
-            variables['fft_{}/dense_r_samples/bias:0'.format(i)] + \
-            variables['fft_{}/dense_l_conditions/bias:0'.format(i)] + \
-            variables['fft_{}/dense_r_conditions/bias:0'.format(i)]
-
-        # TODO: no faster, why?
-#       variables['fft_{}/dense_total/kernel:0'.format(i)] = np.concatenate([
-#           variables['fft_{}/dense_r_samples/kernel:0'.format(i)],
-#           variables['fft_{}/dense_r_conditions/kernel:0'.format(i)],
-#           variables['fft_{}/dense_l_samples/kernel:0'.format(i)],
-#           variables['fft_{}/dense_l_conditions/kernel:0'.format(i)]], axis=0)
 
     conditions = prepare_conditions()
 

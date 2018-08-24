@@ -36,6 +36,7 @@ def fft_layer(
             l_source_tensors,
             units=num_quantization_levels,
             activation=None,
+            use_bias=True,
             kernel_initializer=initializer,
             name='dense_l_samples')
 
@@ -43,6 +44,7 @@ def fft_layer(
             r_source_tensors,
             units=num_quantization_levels,
             activation=None,
+            use_bias=False,
             kernel_initializer=initializer,
             name='dense_r_samples')
 
@@ -61,6 +63,7 @@ def fft_layer(
                 l_condition_tensors,
                 units=num_quantization_levels,
                 activation=None,
+                use_bias=False,
                 kernel_initializer=initializer,
                 name='dense_l_conditions')
 
@@ -68,6 +71,7 @@ def fft_layer(
                 r_condition_tensors,
                 units=num_quantization_levels,
                 activation=None,
+                use_bias=False,
                 kernel_initializer=initializer,
                 name='dense_r_conditions')
 
@@ -97,12 +101,14 @@ def light_weight_fft_layer(
             l_source_tensor,
             units=num_quantization_levels,
             activation=None,
+            use_bias=True,
             name='dense_l_samples')
 
         r_tensor = tf.layers.dense(
             r_source_tensor,
             units=num_quantization_levels,
             activation=None,
+            use_bias=False,
             name='dense_r_samples')
 
         if r_condition_tensor is not None:
@@ -110,12 +116,14 @@ def light_weight_fft_layer(
                 l_condition_tensor,
                 units=num_quantization_levels,
                 activation=None,
+                use_bias=False,
                 name='dense_l_conditions')
 
             r_tensor = r_tensor + tf.layers.dense(
                 r_condition_tensor,
                 units=num_quantization_levels,
                 activation=None,
+                use_bias=False,
                 name='dense_r_conditions')
 
         tensor = tf.nn.relu(l_tensor + r_tensor)
