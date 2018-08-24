@@ -16,7 +16,7 @@ def build_model():
     """
     FLAGS = tf.app.flags.FLAGS
 
-    model = model_fftnet.build_generating_model(
+    model = model_fftnet.build_decoding_model(
         num_quantization_levels=FLAGS.num_quantization_levels,
         condition_size=FLAGS.condition_size,
         num_layers=FLAGS.num_layers,
@@ -135,7 +135,7 @@ def numpy_fftnet(
     return result_tensor
 
 
-def generate_samples_cpu():
+def decode_samples_cpu():
     """
     """
     FLAGS = tf.app.flags.FLAGS
@@ -174,7 +174,7 @@ def generate_samples_cpu():
         (FLAGS.num_layers + 1, FLAGS.condition_size), dtype=np.float32)
 
     # NOTE: 0 ~ 255
-    generated_samples = [128]
+    decoded_samples = [128]
 
     # NOTE: log performance
     time_begin = time.time()
@@ -183,14 +183,14 @@ def generate_samples_cpu():
     t = 2 ** FLAGS.num_layers
 
     while t < len(conditions):
-        if len(generated_samples) % 500 == 0:
-            print('generating samples[{}]'.format(len(generated_samples)))
+        if len(decoded_samples) % 500 == 0:
+            print('decoding samples[{}]'.format(len(decoded_samples)))
 
-        # NOTE: previous generated sample
+        # NOTE: previous decoded sample
         source_tensor = np.zeros(
             (1, FLAGS.num_quantization_levels), dtype=np.float32)
 
-        source_tensor[0, generated_samples[-1]] = 1.0
+        source_tensor[0, decoded_samples[-1]] = 1.0
 
         result_tensor = numpy_fftnet(
             variables,
@@ -199,26 +199,26 @@ def generate_samples_cpu():
             conditions,
             t)
 
-        # NOTE: sample the generated sample
+        # NOTE: sample the decoded sample
         m = np.random.choice(
             np.arange(FLAGS.num_quantization_levels),
             p=result_tensor[0])
 
-        generated_samples.append(m)
+        decoded_samples.append(m)
 
         # NOTE: advance on timeline
         t = t + 1
 
-    performance = (time.time() - time_begin) * 16_000 / len(generated_samples)
+    performance = (time.time() - time_begin) * 16_000 / len(decoded_samples)
 
     print('numpy')
     print('{}'.format(FLAGS.source_wave_path))
     print('{} seconds / 16000 samples'.format(performance))
 
-    return generated_samples
+    return decoded_samples
 
 
-def generate_samples_gpu():
+def decode_samples_gpu():
     """
     """
     FLAGS = tf.app.flags.FLAGS
@@ -236,7 +236,7 @@ def generate_samples_gpu():
         (FLAGS.num_layers + 1, FLAGS.condition_size), dtype=np.float32)
 
     # NOTE: 0 ~ 255
-    generated_samples = [128]
+    decoded_samples = [128]
 
     with tf.Session() as session:
         # NOTE: restore the model weights
@@ -254,16 +254,16 @@ def generate_samples_gpu():
         t = 2 ** FLAGS.num_layers
 
         while t < len(conditions):
-            if len(generated_samples) % 500 == 0:
-                print('generating samples[{}]'.format(len(generated_samples)))
+            if len(decoded_samples) % 500 == 0:
+                print('decoding samples[{}]'.format(len(decoded_samples)))
 
-            # NOTE: previous generated sample
+            # NOTE: previous decoded sample
             current_source_tensor = np.zeros(
                 (1, FLAGS.num_quantization_levels), dtype=np.float32)
 
-            current_source_tensor[0, generated_samples[-1]] = 1.0
+            current_source_tensor[0, decoded_samples[-1]] = 1.0
 
-            # NOTE: next condition for generating next sample
+            # NOTE: next condition for decoding next sample
             current_condition_tensor = conditions[t:t+1]
 
             # NOTE: build source & condition tensors
@@ -288,14 +288,14 @@ def generate_samples_gpu():
 
             fetched = session.run(fetch, feed_dict=feeds)
 
-            # NOTE: sample the generated sample
+            # NOTE: sample the decoded sample
             m = np.random.choice(
                 np.arange(FLAGS.num_quantization_levels),
                 p=fetched['result_tensor'][0])
 
-            generated_samples.append(m)
+            decoded_samples.append(m)
 
-            # NOTE: push newly generated intermediate data into queues
+            # NOTE: push newly decoded intermediate data into queues
             for i in range(FLAGS.num_layers, -1, -1):
                 shift = t % source_queues[i].shape[0]
 
@@ -304,13 +304,13 @@ def generate_samples_gpu():
             # NOTE: advance on timeline
             t = t + 1
 
-    performance = (time.time() - time_begin) * 16_000 / len(generated_samples)
+    performance = (time.time() - time_begin) * 16_000 / len(decoded_samples)
 
     print('tensorflow')
     print('{}'.format(FLAGS.source_wave_path))
     print('{} seconds / 16000 samples'.format(performance))
 
-    return generated_samples
+    return decoded_samples
 
 
 def main(_):
@@ -319,12 +319,12 @@ def main(_):
     FLAGS = tf.app.flags.FLAGS
 
     if FLAGS.use_cpu:
-        generated_samples = generate_samples_cpu()
+        decoded_samples = decode_samples_cpu()
     else:
-        generated_samples = generate_samples_gpu()
+        decoded_samples = decode_samples_gpu()
 
-    # NOTE: decode generated samples
-    wave = np.array(generated_samples, dtype=np.float32)
+    # NOTE: decode decoded samples
+    wave = np.array(decoded_samples, dtype=np.float32)
 
     wave = (2.0 / (FLAGS.num_quantization_levels - 1)) * wave - 1.0
 
@@ -382,7 +382,6 @@ if __name__ == '__main__':
     tf.app.flags.DEFINE_boolean(
         'use_cpu',
         False,
-        'use numpy instead od tensorflow to generate the wave')
+        'use numpy instead od tensorflow to decode the wave')
 
     tf.app.run()
-

@@ -220,7 +220,7 @@ def build_training_model(
     }
 
 
-def build_generating_model(
+def build_decoding_model(
         num_quantization_levels=256,
         condition_size=20,
         num_layers=11,
@@ -273,4 +273,3 @@ def build_generating_model(
         'l_condition_tensors': l_condition_tensors,
         'result_tensor': result_tensor,
     }
-

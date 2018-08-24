@@ -31,7 +31,7 @@ def build_dataset():
     target_size = FLAGS.samples_size
 
     batches = dataset.wave_batches(
-        FLAGS.train_dir_path, FLAGS.batchs_size, FLAGS.samples_size)
+        FLAGS.train_dir_path, FLAGS.batches_size, FLAGS.samples_size)
 
     for clean_waves, noise_waves, features in batches:
         # NOTE: use noisy input to infer clean output
@@ -119,7 +119,7 @@ if __name__ == '__main__':
     tf.app.flags.DEFINE_string('ckpt_path', None, '')
     tf.app.flags.DEFINE_string('logs_path', None, '')
 
-    tf.app.flags.DEFINE_integer('batchs_size', 5, '')
+    tf.app.flags.DEFINE_integer('batches_size', 5, '')
     tf.app.flags.DEFINE_integer('samples_size', 5000, '')
     tf.app.flags.DEFINE_integer('max_training_step', 300_000, '')
 
