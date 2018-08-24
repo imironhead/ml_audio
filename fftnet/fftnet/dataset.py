@@ -271,6 +271,8 @@ if __name__ == '__main__':
     parser.add_argument('--result_npz_dir', type=str)
     parser.add_argument('--feature_name', type=str)
     parser.add_argument('--feature_bins', type=int)
+    parser.add_argument('--fft_window_size', type=int, default=400)
+    parser.add_argument('--fft_hop_length', type=int, default=160)
 
     args = parser.parse_args()
 
@@ -287,7 +289,9 @@ if __name__ == '__main__':
             source_wav_path,
             result_npz_path,
             feature_name=args.feature_name,
-            feature_size=args.feature_bins)
+            feature_size=args.feature_bins,
+            fft_window_size=args.fft_window_size,
+            fft_hop_length=args.fft_hop_length)
 
         print('done [{}]: {}/{}'.format(args.feature_name, idx, len(names)))
 
