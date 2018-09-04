@@ -2,7 +2,6 @@
 """
 import os
 
-import numpy as np
 import tensorflow as tf
 
 import fftnet.dataset as dataset
@@ -14,13 +13,12 @@ def build_model():
     """
     FLAGS = tf.app.flags.FLAGS
 
-    model = model_fftnet.build_training_model(
+    return model_fftnet.build_training_model(
         num_samples=FLAGS.samples_size,
         num_quantization_levels=FLAGS.num_quantization_levels,
+        hidden_layer_size=FLAGS.hidden_layer_size,
         condition_size=FLAGS.condition_size,
         num_layers=FLAGS.num_layers)
-
-    return model
 
 
 def build_dataset():
@@ -127,6 +125,8 @@ if __name__ == '__main__':
     #       the waveforms are quantized to 256 categorical values based on
     #       mu-law.
     tf.app.flags.DEFINE_integer('num_quantization_levels', 256, '')
+
+    tf.app.flags.DEFINE_integer('hidden_layer_size', 256, '')
 
     # NOTE: FFTNET, 2.2
     #       Then we extract the MCC and F0 features for each overlapping
