@@ -16,13 +16,12 @@ def build_model():
     """
     FLAGS = tf.app.flags.FLAGS
 
-    model = model_fftnet.build_decoding_model(
+    return model_fftnet.build_decoding_model(
         num_quantization_levels=FLAGS.num_quantization_levels,
+        hidden_layer_size=FLAGS.hidden_layer_size,
         condition_size=FLAGS.condition_size,
         num_layers=FLAGS.num_layers,
         logits_scaling_factor=FLAGS.logits_scaling_factor)
-
-    return model
 
 
 def prepare_conditions():
@@ -61,10 +60,17 @@ def prepare_source_queues():
 
     queues = []
 
-    for i in range(FLAGS.num_layers, -1, -1):
-        queue = np.zeros((2 ** i, FLAGS.num_quantization_levels), dtype=np.float32)
+    for i in range(FLAGS.num_layers + 1):
+        p = FLAGS.num_layers - i
 
-        queue[:, FLAGS.num_quantization_levels // 2] = 1.0
+        if i == 0:
+            queue = np.zeros(
+                (2 ** p, FLAGS.num_quantization_levels), dtype=np.float32)
+
+            queue[:, FLAGS.num_quantization_levels // 2] = 1.0
+        else:
+            queue = np.zeros(
+                (2 ** p, FLAGS.hidden_layer_size), dtype=np.float32)
 
         queues.append(queue)
 
@@ -77,18 +83,16 @@ def numpy_fftnet(
     """
     FLAGS = tf.app.flags.FLAGS
 
-    for i in range(FLAGS.num_layers, -1, -1):
-        index = FLAGS.num_layers - i
+    for i in range(FLAGS.num_layers + 1):
+        offset_source = t % source_queues[i].shape[0]
 
-        offset_source = t % source_queues[index].shape[0]
-
-        offset_condition = t - 2 ** i
+        offset_condition = t - 2 ** (FLAGS.num_layers - i)
 
         result_tensor = \
             variables['fft_{}/dense_l_samples/bias:0'.format(i)].copy()
 
         result_tensor += np.matmul(
-            source_queues[index][offset_source:offset_source+1],
+            source_queues[i][offset_source:offset_source+1],
             variables['fft_{}/dense_l_samples/kernel:0'.format(i)])
 
         result_tensor += np.matmul(
@@ -114,7 +118,7 @@ def numpy_fftnet(
         result_tensor = np.maximum(result_tensor, 0.0, result_tensor)
 
         # NOTE: keep in queues
-        source_queues[index][offset_source] = source_tensor
+        source_queues[i][offset_source] = source_tensor
 
         source_tensor = result_tensor
 
@@ -166,12 +170,6 @@ def decode_samples_cpu():
     conditions = prepare_conditions()
 
     source_queues = prepare_source_queues()
-
-    l_source_tensors = np.zeros(
-        (FLAGS.num_layers + 1, FLAGS.num_quantization_levels), dtype=np.float32)
-
-    l_condition_tensors = np.zeros(
-        (FLAGS.num_layers + 1, FLAGS.condition_size), dtype=np.float32)
 
     # NOTE: 0 ~ 255
     decoded_samples = [128]
@@ -229,12 +227,6 @@ def decode_samples_gpu():
 
     model = build_model()
 
-    l_source_tensors = np.zeros(
-        (FLAGS.num_layers + 1, FLAGS.num_quantization_levels), dtype=np.float32)
-
-    l_condition_tensors = np.zeros(
-        (FLAGS.num_layers + 1, FLAGS.condition_size), dtype=np.float32)
-
     # NOTE: 0 ~ 255
     decoded_samples = [128]
 
@@ -258,33 +250,34 @@ def decode_samples_gpu():
                 print('decoding samples[{}]'.format(len(decoded_samples)))
 
             # NOTE: previous decoded sample
-            current_source_tensor = np.zeros(
+            r_source_tensor_0 = np.zeros(
                 (1, FLAGS.num_quantization_levels), dtype=np.float32)
 
-            current_source_tensor[0, decoded_samples[-1]] = 1.0
-
-            # NOTE: next condition for decoding next sample
-            current_condition_tensor = conditions[t:t+1]
-
-            # NOTE: build source & condition tensors
-            for i in range(FLAGS.num_layers, -1, -1):
-                index = FLAGS.num_layers - i
-                shift = t % source_queues[index].shape[0]
-
-                l_source_tensors[index] = source_queues[index][shift]
-                l_condition_tensors[index] = conditions[t - 2 ** i]
+            r_source_tensor_0[0, decoded_samples[-1]] = 1.0
 
             feeds = {
-                model['current_source_tensor']: current_source_tensor,
-                model['current_condition_tensor']: current_condition_tensor,
-                model['l_source_tensors']: l_source_tensors,
-                model['l_condition_tensors']: l_condition_tensors,
+                model['r_source_tensor_0']: r_source_tensor_0,
+                model['r_condition_tensor_0']: conditions[t:t+1],
             }
 
             fetch = {
                 'result_tensor': model['result_tensor'],
-                'r_source_tensors': model['r_source_tensors'],
             }
+
+            # NOTE: build source & condition tensors
+            for i in range(FLAGS.num_layers + 1):
+                offset_s = t % source_queues[i].shape[0]
+                offset_c = t - 2 ** (FLAGS.num_layers - i)
+
+                r_source_name = 'r_source_tensor_{}'.format(i)
+                l_source_name = 'l_source_tensor_{}'.format(i)
+                l_condition_name = 'l_condition_tensor_{}'.format(i)
+
+                fetch[r_source_name] = model[r_source_name]
+                feeds[model[l_source_name]] = \
+                    source_queues[i][offset_s:offset_s+1]
+                feeds[model[l_condition_name]] = \
+                    conditions[offset_c:offset_c+1]
 
             fetched = session.run(fetch, feed_dict=feeds)
 
@@ -296,10 +289,12 @@ def decode_samples_gpu():
             decoded_samples.append(m)
 
             # NOTE: push newly decoded intermediate data into queues
-            for i in range(FLAGS.num_layers, -1, -1):
+            for i in range(FLAGS.num_layers + 1):
                 shift = t % source_queues[i].shape[0]
 
-                source_queues[i][shift] = fetched['r_source_tensors'][i]
+                r_source_name = 'r_source_tensor_{}'.format(i)
+
+                source_queues[i][shift] = fetched[r_source_name]
 
             # NOTE: advance on timeline
             t = t + 1
@@ -345,6 +340,8 @@ if __name__ == '__main__':
     #       the waveforms are quantized to 256 categorical values based on
     #       mu-law.
     tf.app.flags.DEFINE_integer('num_quantization_levels', 256, '')
+
+    tf.app.flags.DEFINE_integer('hidden_layer_size', 256, '')
 
     # NOTE: FFTNET, 2.2
     #       Then we extract the MCC and F0 features for each overlapping
