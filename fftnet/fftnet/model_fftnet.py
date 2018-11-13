@@ -8,25 +8,17 @@ def fft_layer(
         offset,
         source_tensors,
         condition_tensors,
-        num_quantization_levels,
+        hidden_layer_size,
         scope_name):
     """
     """
     initializer = tf.contrib.layers.xavier_initializer()
 
-    shape = tf.shape(source_tensors)
-
-    n, w, c = shape[0], shape[1], shape[2]
-
     # NOTE: FFTNET, 2.3.1, zero padding,
     #       we recommend using training sequences of length between 2N and 3N
     #       so that significant number (33% - 50%) of training samples are
     #       partial sequences.
-    # NOTE: build zero padding for one hot encoded source_tensors
-    pad_source = tf.ones([n, offset, 1])
-    pad_source = tf.pad(pad_source, [[0, 0], [0, 0], [128, 127]])
-
-    source_tensors = tf.concat([pad_source, source_tensors], axis=1)
+    source_tensors = tf.pad(source_tensors, [[0, 0], [offset, 0], [0, 0]])
 
     l_source_tensors = source_tensors[:, :-offset, :]
     r_source_tensors = source_tensors[:, offset:, :]
@@ -34,7 +26,7 @@ def fft_layer(
     with tf.variable_scope(scope_name, reuse=tf.AUTO_REUSE):
         l_tensors = tf.layers.dense(
             l_source_tensors,
-            units=num_quantization_levels,
+            units=hidden_layer_size,
             activation=None,
             use_bias=True,
             kernel_initializer=initializer,
@@ -42,7 +34,7 @@ def fft_layer(
 
         r_tensors = tf.layers.dense(
             r_source_tensors,
-            units=num_quantization_levels,
+            units=hidden_layer_size,
             activation=None,
             use_bias=False,
             kernel_initializer=initializer,
@@ -61,7 +53,7 @@ def fft_layer(
 
             l_tensors = l_tensors + tf.layers.dense(
                 l_condition_tensors,
-                units=num_quantization_levels,
+                units=hidden_layer_size,
                 activation=None,
                 use_bias=False,
                 kernel_initializer=initializer,
@@ -69,7 +61,7 @@ def fft_layer(
 
             r_tensors = r_tensors + tf.layers.dense(
                 r_condition_tensors,
-                units=num_quantization_levels,
+                units=hidden_layer_size,
                 activation=None,
                 use_bias=False,
                 kernel_initializer=initializer,
@@ -79,7 +71,7 @@ def fft_layer(
 
         tensors = tf.layers.dense(
             tensors,
-            units=num_quantization_levels,
+            units=hidden_layer_size,
             activation=tf.nn.relu,
             kernel_initializer=initializer,
             name='dense_merge')
@@ -92,21 +84,21 @@ def light_weight_fft_layer(
         r_source_tensor,
         l_condition_tensor,
         r_condition_tensor,
-        num_quantization_levels,
+        hidden_layer_size,
         scope_name):
     """
     """
     with tf.variable_scope(scope_name, reuse=tf.AUTO_REUSE):
         l_tensor = tf.layers.dense(
             l_source_tensor,
-            units=num_quantization_levels,
+            units=hidden_layer_size,
             activation=None,
             use_bias=True,
             name='dense_l_samples')
 
         r_tensor = tf.layers.dense(
             r_source_tensor,
-            units=num_quantization_levels,
+            units=hidden_layer_size,
             activation=None,
             use_bias=False,
             name='dense_r_samples')
@@ -114,14 +106,14 @@ def light_weight_fft_layer(
         if r_condition_tensor is not None:
             l_tensor = l_tensor + tf.layers.dense(
                 l_condition_tensor,
-                units=num_quantization_levels,
+                units=hidden_layer_size,
                 activation=None,
                 use_bias=False,
                 name='dense_l_conditions')
 
             r_tensor = r_tensor + tf.layers.dense(
                 r_condition_tensor,
-                units=num_quantization_levels,
+                units=hidden_layer_size,
                 activation=None,
                 use_bias=False,
                 name='dense_r_conditions')
@@ -130,7 +122,7 @@ def light_weight_fft_layer(
 
         tensor = tf.layers.dense(
             tensor,
-            units=num_quantization_levels,
+            units=hidden_layer_size,
             activation=tf.nn.relu,
             name='dense_merge')
 
@@ -140,6 +132,7 @@ def light_weight_fft_layer(
 def build_training_model(
         num_samples,
         num_quantization_levels=256,
+        hidden_layer_size=256,
         condition_size=20,
         num_layers=11):
     """
@@ -172,12 +165,12 @@ def build_training_model(
 
     tensors = source_waves
 
-    for i in range(num_layers, -1, -1):
+    for i in range(num_layers + 1):
         tensors = fft_layer(
-            2 ** i,
+            2 ** (num_layers - i),
             tensors,
             condition_tensors,
-            num_quantization_levels,
+            hidden_layer_size,
             'fft_{}'.format(i))
 
     initializer = tf.contrib.layers.xavier_initializer()
@@ -222,38 +215,43 @@ def build_training_model(
 
 def build_decoding_model(
         num_quantization_levels=256,
+        hidden_layer_size=256,
         condition_size=20,
         num_layers=11,
         logits_scaling_factor=2.0):
     """
     """
-    l_source_tensors = tf.placeholder(
-        shape=[num_layers + 1, num_quantization_levels], dtype=tf.float32)
+    model = {}
 
-    l_condition_tensors = tf.placeholder(
-        shape=[num_layers + 1, condition_size], dtype=tf.float32)
-
-    current_source_tensor = tf.placeholder(
+    r_source_tensor = tf.placeholder(
         shape=[1, num_quantization_levels], dtype=tf.float32)
 
-    current_condition_tensor = tf.placeholder(
+    r_condition_tensor = tf.placeholder(
         shape=[1, condition_size], dtype=tf.float32)
 
-    r_source_tensors = []
+    model['r_condition_tensor_0'] = r_condition_tensor
 
-    r_source_tensor = current_source_tensor
+    for i in range(num_layers + 1):
+        if i == 0:
+            l_source_tensor = tf.placeholder(
+                shape=[1, num_quantization_levels], dtype=tf.float32)
+        else:
+            l_source_tensor = tf.placeholder(
+                shape=[1, hidden_layer_size], dtype=tf.float32)
 
-    for i in range(num_layers, -1, -1):
-        r_source_tensors.append(r_source_tensor)
+        l_condition_tensor = tf.placeholder(
+            shape=[1, condition_size], dtype=tf.float32)
 
-        index = num_layers - i
+        model['r_source_tensor_{}'.format(i)] = r_source_tensor
+        model['l_source_tensor_{}'.format(i)] = l_source_tensor
+        model['l_condition_tensor_{}'.format(i)] = l_condition_tensor
 
         r_source_tensor = light_weight_fft_layer(
-            l_source_tensors[index:index+1, :],
+            l_source_tensor,
             r_source_tensor,
-            l_condition_tensors[index:index+1, :],
-            current_condition_tensor,
-            num_quantization_levels,
+            l_condition_tensor,
+            r_condition_tensor,
+            hidden_layer_size,
             'fft_{}'.format(i))
 
     r_source_tensor = tf.layers.dense(
@@ -261,15 +259,8 @@ def build_decoding_model(
         units=num_quantization_levels,
         activation=None)
 
-    result_tensor = tf.nn.softmax(logits_scaling_factor * r_source_tensor)
+    model['result_tensor'] = \
+        tf.nn.softmax(logits_scaling_factor * r_source_tensor)
 
-    r_source_tensors = tf.concat(r_source_tensors, axis=0)
+    return model
 
-    return {
-        'current_source_tensor': current_source_tensor,
-        'current_condition_tensor': current_condition_tensor,
-        'l_source_tensors': l_source_tensors,
-        'r_source_tensors': r_source_tensors,
-        'l_condition_tensors': l_condition_tensors,
-        'result_tensor': result_tensor,
-    }
