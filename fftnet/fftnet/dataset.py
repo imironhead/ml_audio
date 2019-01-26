@@ -169,6 +169,32 @@ def dense_features(
             n_mfcc=feature_size,
             n_fft=fft_window_size,
             hop_length=fft_hop_length)
+    elif feature_name == 'robot':
+        x = wave.astype(np.float)
+
+        frame_period = 1000 * fft_hop_length / sampling_rate
+
+        _f0, t = pyworld.dio(
+            x,
+            sampling_rate,
+            f0_floor=50.0,
+            f0_ceil=600.0,
+            channels_in_octave=2,
+            frame_period=frame_period)
+
+        _f0 = np.zeros_like(_f0)
+
+        _sp = pyworld.cheaptrick(x, _f0, t, sampling_rate)
+        _ap = pyworld.d4c(x, _f0, t, sampling_rate)
+        _y = pyworld.synthesize(_f0, _sp, _ap, sampling_rate, frame_period)
+
+        # NOTE: features from robotic sound
+        features = librosa.feature.mfcc(
+            y=_y,
+            sr=sampling_rate,
+            n_mfcc=feature_size,
+            n_fft=fft_window_size,
+            hop_length=fft_hop_length)
     else:
         features = librosa.feature.melspectrogram(
             y=wave,
@@ -181,18 +207,20 @@ def dense_features(
 
     features = features.T
 
-    # NOTE: FFTNET, 2.2
-    #       For the ht that are not located at the window centers, we linearly
-    #       interpolate their values based on the assigned ht in the last step.
-    ts = np.arange(0, features.shape[0] * fft_hop_length, fft_hop_length)
+    if wave.shape[0] > features.shape[0]:
+        # NOTE: FFTNET, 2.2
+        #       For the ht that are not located at the window centers, we
+        #       linearly interpolate their values based on the assigned ht in
+        #       the last step.
+        ts = np.arange(0, features.shape[0] * fft_hop_length, fft_hop_length)
 
-    interp = scipy.interpolate.interp1d(ts, features, axis=0)
+        interp = scipy.interpolate.interp1d(ts, features, axis=0)
 
-    ts = np.arange(0, (features.shape[0] - 1) * fft_hop_length, 1)
+        ts = np.arange(0, (features.shape[0] - 1) * fft_hop_length, 1)
 
-    interp_features = interp(ts)
+        features = interp(ts)
 
-    return interp_features
+    return features
 
 
 def preprocess_wave(
