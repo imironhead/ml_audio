@@ -95,6 +95,9 @@ def random_waves(source_npzs_path, samples_size):
         if wave.shape[0] != features.shape[0]:
             raise Exception('invalid data, miss matched data shapes')
 
+        if wave.shape[0] < samples_size:
+            continue
+
         # NOTE: random crop
         idx = np.random.randint(wave.shape[0] - samples_size)
 
@@ -225,6 +228,7 @@ def dense_features(
 
 def preprocess_wave(
         source_wav_path,
+        target_wav_path,
         result_npz_path,
         feature_name='mfcc',
         feature_size=25,
@@ -235,16 +239,18 @@ def preprocess_wave(
     """
     # NOTE: read wave, assume they are 16-bits in 16,000 Hz
     # NOTE: librosa does not accept file object
-    sr, wave = scipy.io.wavfile.read(source_wav_path)
+    sr, source_wave = scipy.io.wavfile.read(source_wav_path)
+    sr, target_wave = scipy.io.wavfile.read(target_wav_path)
 
-    wave = wave.astype(np.float32) / 32768.0
+    source_wave = source_wave.astype(np.float32) / 32768.0
+    target_wave = target_wave.astype(np.float32) / 32768.0
 
     # NOTE: FFTNET, 2.2
     #       For the ht that are not located at the window centers, we
     #       linearly interpolate their values based on the assigned ht in
     #       the last step.
     features = dense_features(
-        wave, sr, feature_name, feature_size, fft_window_size, fft_hop_length)
+        source_wave, sr, feature_name, feature_size, fft_window_size, fft_hop_length)
 
     # NOTE: FFTNET, 2.2
     #       For the ht corresponding to the window centers, we assign the
@@ -265,29 +271,29 @@ def preprocess_wave(
     #       size window
     features = features[fft_window_size // 2:]
 
-    wave = wave[fft_window_size // 2:]
+    target_wave = target_wave[fft_window_size // 2:]
 
     # NOTE: align length
-    aligned_length = min(wave.shape[0], features.shape[0])
+    aligned_length = min(target_wave.shape[0], features.shape[0])
 
-    wave = wave[:aligned_length]
+    target_wave = target_wave[:aligned_length]
 
     features = features[:aligned_length]
 
     # NOTE: FFTNET, 3.1, experimental setup,
     #       the waveforms are quantized to 256 categorical values based on
     #       mu-law.
-    wave = mu_law_encode(wave)
+    target_wave = mu_law_encode(target_wave)
 
     # NOTE: can not use tf.gfile.GFile
     np.savez(
         result_npz_path,
-        wave=wave,
+        wave=target_wave,
         feature_name=feature_name,
         features=features)
 
 
-if __name__ == '__main__':
+def main():
     # NOTE: preprocess wav to mu-law encoded and features (mfcc/mel)
     # NOTE: problems on multiprocessing with numpy
 
@@ -296,6 +302,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='preprocess wav files')
 
     parser.add_argument('--source_wav_dir', type=str)
+    parser.add_argument('--target_wav_dir', type=str)
     parser.add_argument('--result_npz_dir', type=str)
     parser.add_argument('--feature_name', type=str)
     parser.add_argument('--feature_bins', type=int)
@@ -311,10 +318,12 @@ if __name__ == '__main__':
         name, ext = os.path.splitext(name)
 
         source_wav_path = os.path.join(args.source_wav_dir, name + ext)
+        target_wav_path = os.path.join(args.target_wav_dir, name + ext)
         result_npz_path = os.path.join(args.result_npz_dir, name + '.npz')
 
         preprocess_wave(
             source_wav_path,
+            target_wav_path,
             result_npz_path,
             feature_name=args.feature_name,
             feature_size=args.feature_bins,
@@ -323,3 +332,6 @@ if __name__ == '__main__':
 
         print('done [{}]: {}/{}'.format(args.feature_name, idx, len(names)))
 
+
+if __name__ == '__main__':
+    main()
